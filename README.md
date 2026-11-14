@@ -39,7 +39,9 @@ recording, extract window features, split repetitions, train and evaluate.
 The [step-by-step guide](RBF_SVM_GUIDE.md) explains each stage and the baseline
 results. The starter uses the first eight channels, 200 ms windows, RMS/MAV/
 waveform-length features, training-only scaling and an RBF SVM. Repetitions
-1, 3, 4 and 6 train; repetitions 2 and 5 test. Rest is excluded.
+1, 3, 4 and 6 form the grouped cross-validation set; repetitions 2 and 5 are
+reserved for final testing. Rest is included as class 0, and the classifier
+reports its rest false-activation rate.
 
 Recordings, virtual environments and Python caches are excluded by `.gitignore`.
 Download the data separately; do not add the `.mat` recording to GitHub.

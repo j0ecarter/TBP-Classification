@@ -29,24 +29,28 @@ It uses the existing `read_ninapro.py` in this project.
    MAV (mean absolute magnitude), and waveform length (total absolute change
    between neighbouring samples). Each window becomes 24 numbers: eight RMS
    values, eight MAV values, then eight waveform lengths.
-   `X` holds these feature rows; `y` holds their movement labels.
-3. **Split:** repetitions 1, 3, 4 and 6 train; repetitions 2 and 5 test.
-   All overlapping windows from one repetition stay together. Randomly
-   splitting windows could put nearly identical signals into both sets.
-4. **Train:** `StandardScaler` learns each feature's mean and scale from
-   training data. `SVC` then learns to separate the movements with an RBF kernel.
-   The pipeline automatically applies the same learned scaling at prediction.
-   `C=1.0` and `gamma="scale"` are starting settings, not tuned parameters.
+   `X` holds these feature rows; `y` holds their rest or movement labels.
+3. **Split:** repetitions 1, 3, 4 and 6 form the development set;
+   repetitions 2 and 5 remain held out for final testing. All overlapping
+   windows from one repetition stay together. This commonly used NinaPro
+   benchmark split supports comparison with prior work; it is not claimed to
+   be the uniquely best split.
+4. **Tune and train:** `LeaveOneGroupOut` validates on each complete development
+   repetition in turn. `GridSearchCV` compares three `C` values and three
+   `gamma` values using mean balanced accuracy. `StandardScaler` and `SVC`
+   remain in one pipeline, so scaling is learned only from each fold's training
+   portion. The selected pipeline is then refitted on all development windows.
 5. **Evaluate:** accuracy is the fraction of test windows classified correctly.
    Balanced accuracy averages recall across movement classes, giving each
    movement equal weight. The printed report shows per-class precision,
-   recall and F1; support is the number of windows, not independent trials.
+   recall and F1. The rest false-activation rate reports how often a held-out
+   rest window is incorrectly predicted as movement.
 
 ## Scope of this first experiment
 
 - One DB2 E1 (Exercise B) file, one participant, first eight channels.
-- Movement-only classification: rest (label 0) is excluded. The classifier
-  cannot decide whether someone is resting.
+- Rest is included as class 0. Balanced class weights reduce the effect of its
+  larger number of windows.
 - Windows crossing a gesture or repetition boundary are excluded. This does
   not evaluate transitions or continuous movement detection.
 - No additional signal filtering is applied: features use the stored EMG.
@@ -58,10 +62,9 @@ It uses the existing `read_ninapro.py` in this project.
 - The score describes held-out repetitions from the same recording, not
   generalisation to a new person, day or device. Adjacent test windows overlap.
 
-After understanding this baseline, add a confusion matrix and a rest class
-with an explicit rest-splitting policy. Tune C and gamma only using grouped
-validation inside the training repetitions; reserve the test repetitions for
-final evaluation. Do not repeatedly choose settings using their test score.
+Next, add a saved confusion matrix and repeat the fixed procedure for additional
+participants. Keep repetitions 2 and 5 out of parameter selection, and do not
+choose further settings using their test results.
 
 References: [NinaPro DB2](https://ninapro.hevs.ch/instructions/DB2.html),
 [scikit-learn SVC](https://scikit-learn.org/stable/modules/generated/sklearn.svm.SVC.html),
@@ -69,7 +72,9 @@ References: [NinaPro DB2](https://ninapro.hevs.ch/instructions/DB2.html),
 
 ## Verified first run — 14 November 2026
 
-The local subject-1 recording produced 7,028 windows with 24 features each:
-4,707 training windows and 2,321 test windows across movement IDs 1–17.
-Accuracy was 70.5%; balanced accuracy was 69.0%. These are results of this
-fixed baseline, with no parameter search.
+The local subject-1 recording produced 17,233 windows with 24 features each:
+11,592 development windows and 5,641 test windows across rest plus movement
+IDs 1–17. Four-fold repetition-grouped validation selected `C=10` and
+`gamma="scale"`, with mean validation balanced accuracy of 69.2%. Final held-out
+accuracy was 81.5%, balanced accuracy was 79.5%, and the rest false-activation
+rate was 17.0%.

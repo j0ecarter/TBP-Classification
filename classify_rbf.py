@@ -1,9 +1,10 @@
-"""First RBF-SVM baseline: one NinaPro DB2 Exercise B recording."""
+"""RBF-SVM baseline with grouped tuning for NinaPro DB2 classification."""
 
 import argparse
 
 import numpy as np
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report
+from sklearn.model_selection import GridSearchCV, LeaveOneGroupOut
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
@@ -25,8 +26,9 @@ def make_features(recording):
         gesture = gestures[start]
         repetition = repetitions[start]
 
-        # Start with movement periods only. Never mix labels or repetitions.
-        if gesture == 0 or repetition == 0:
+        # Label 0 is rest. Skip only samples without a usable repetition ID.
+        # Never allow a window to mix gesture labels or repetitions.
+        if repetition == 0:
             continue
         if not np.all(gestures[start:stop] == gesture):
             continue
@@ -43,7 +45,7 @@ def make_features(recording):
         groups.append(repetition)
 
     if not features:
-        raise ValueError("No complete movement windows found.")
+        raise ValueError("No complete rest or movement windows found.")
     X = np.asarray(features)
     if not np.isfinite(X).all():
         raise ValueError("Features contain missing or infinite values.")
@@ -75,22 +77,70 @@ def main():
     if len(np.unique(y[train])) < 2 or not np.array_equal(
         np.unique(y[train]), np.unique(y[test])
     ):
-        raise ValueError("Training and test sets must contain the same movement classes.")
+        raise ValueError("Training and test sets must contain the same classes.")
     print(f"X: {X.shape}; y: {y.shape}; classes: {np.unique(y)}")
     print(f"Training windows: {train.sum()}; test windows: {test.sum()}")
+    print(
+        f"Rest windows: {(y[train] == 0).sum()} train; "
+        f"{(y[test] == 0).sum()} test"
+    )
 
-    # 4. Learn scaling and the classifier using training data only.
+    X_train = X[train]
+    y_train = y[train]
+    training_groups = repetitions[train]
+    X_test = X[test]
+    y_test = y[test]
+    print(f"Cross-validation repetitions: {np.unique(training_groups)}")
+
+    # 4. Tune C and gamma using whole training repetitions as validation folds.
     model = make_pipeline(
         StandardScaler(),
-        SVC(kernel="rbf", C=1.0, gamma="scale"),
+        SVC(
+            kernel="rbf",
+            class_weight="balanced",
+        ),
     )
-    model.fit(X[train], y[train])
+    parameter_grid = {
+        "svc__C": [0.1, 1, 10],
+        "svc__gamma": ["scale", 0.01, 0.1],
+    }
+    splitter = LeaveOneGroupOut()
 
-    # 5. Evaluate once on the held-out repetitions.
-    predicted = model.predict(X[test])
-    print(f"Accuracy: {accuracy_score(y[test], predicted):.1%}")
-    print(f"Balanced accuracy: {balanced_accuracy_score(y[test], predicted):.1%}")
-    print(classification_report(y[test], predicted, digits=3, zero_division=0))
+    for fold, (fit_indices, validation_indices) in enumerate(
+        splitter.split(X_train, y_train, training_groups),
+        start=1,
+    ):
+        fit_repetitions = np.unique(training_groups[fit_indices])
+        validation_repetitions = np.unique(training_groups[validation_indices])
+        print(
+            f"Fold {fold}: train {fit_repetitions}; "
+            f"validate {validation_repetitions}"
+        )
+
+    search = GridSearchCV(
+        estimator=model,
+        param_grid=parameter_grid,
+        cv=splitter,
+        scoring="balanced_accuracy",
+        refit=True,
+        error_score="raise",
+    )
+    search.fit(X_train, y_train, groups=training_groups)
+    print(f"Best parameters: {search.best_params_}")
+    print(f"Mean CV balanced accuracy: {search.best_score_:.1%}")
+
+    # 5. Evaluate the selected model once on held-out repetitions 2 and 5.
+    best_model = search.best_estimator_
+    predicted = best_model.predict(X_test)
+    rest_test = y_test == 0
+    if not rest_test.any():
+        raise ValueError("The test set contains no rest windows.")
+    false_activation_rate = np.mean(predicted[rest_test] != 0)
+
+    print(f"Accuracy: {accuracy_score(y_test, predicted):.1%}")
+    print(f"Balanced accuracy: {balanced_accuracy_score(y_test, predicted):.1%}")
+    print(f"Rest false-activation rate: {false_activation_rate:.1%}")
+    print(classification_report(y_test, predicted, digits=3, zero_division=0))
 
 
 if __name__ == "__main__":
